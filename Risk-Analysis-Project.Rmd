@@ -1,7 +1,6 @@
 ---
 title: "GR5261_Project"
 author: "Chenlin Cheng"
-date: "4/19/2019"
 output: pdf_document
 ---
 
