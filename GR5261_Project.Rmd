@@ -1,0 +1,362 @@
+---
+title: "GR5261_Project"
+author: "Chenlin Cheng"
+date: "4/19/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, result = "hide")
+```
+
+```{r}
+library(tseries)
+library(itsmr)
+library(forecast)
+library(quantmod)
+library(rugarch)
+library(FinTS)
+library(lmtest)
+library(fBasics)
+library(lubridate)
+library(ggplot2)
+library(urca)
+
+
+suppressMessages(getSymbols("AMZN", from = "1998-12-31", to = "2019-01-01"))
+suppressMessages(getSymbols("EBAY", from = "1998-12-31", to = "2019-01-01"))
+suppressMessages(getSymbols("WMT", from = "1998-12-31", to = "2019-01-01"))
+```
+
+###################
+#     Amazon      #
+###################
+
+```{r}
+#Calculate the LogReturn of Amazon
+close_amazon <- AMZN[,"AMZN.Adjusted"]
+LogR_amazon <- dailyReturn(close_amazon, method = "log")
+LogR_amazon <- na.omit(LogR_amazon)
+
+#scatter plot
+plot(LogR_amazon, main = "Scatter plot of Amazon Log-Return", ylim = c(-0.4, 0.4))
+```
+
+
+```{r}
+#Box-Plot
+xts_to_dataframe <- function(data_xts) {
+  df_t <- data.frame(year = factor(year(index(data_xts))), value = coredata(data_xts))
+  colnames(df_t) <- c( "year", "value")
+  df_t
+}
+amazon_df <- xts_to_dataframe(LogR_amazon)
+dataframe_boxplot <- function(dataset, title) {
+  p <- ggplot(data = dataset, aes(x = year, y = value)) + theme_bw() + theme(legend.position = "none") + geom_boxplot(fill = "lightblue") + ylim(-0.4, 0.4)
+  p <- p + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle(title) + ylab("year")
+  p
+}
+dataframe_boxplot(amazon_df, "Amazon Log-Return box plots")
+```
+
+
+```{r}
+#Density-Plot based on years
+dataframe_densityplot <- function(dataset, title) {
+  p <- ggplot(data = dataset, aes(x = value)) + geom_density(fill = "lightblue") 
+  p <- p + facet_wrap(. ~ year)
+  p <- p + theme_bw() + theme(legend.position = "none") + ggtitle(title)
+  p
+}
+dataframe_densityplot(amazon_df, "Amazon daily log-returns density plots 1998-2018")
+```
+
+```{r}
+#acf test (randomness)
+Box.test(LogR_amazon)
+#box.test p-value is large
+acf(LogR_amazon)
+pacf(LogR_amazon)
+acf(LogR_amazon^2)
+```
+
+```{r}
+#Unit root test
+urdftest_lag = floor(12* (nrow(LogR_amazon)/100)^0.25)
+summary(ur.df(LogR_amazon, type = "none", lags = urdftest_lag, selectlags="BIC"))
+```
+
+```{r}
+#fit arima
+auto_model_amazon <- auto.arima(LogR_amazon, max.d = 2, allowmean = FALSE)
+summary(auto_model_amazon)
+#all coefficients are statistically significant
+```
+
+```{r}
+#ARCH effect test
+residuals_amazon <- residuals(auto_model_amazon)
+ArchTest(residuals_amazon - mean(residuals_amazon))
+par(mfrow=c(1,2))
+acf(residuals_amazon)
+pacf(residuals_amazon)
+
+#Residual square
+residuals_sq_amazon <- residuals_amazon^2
+acf(residuals_sq_amazon)
+pacf(residuals_sq_amazon)
+```
+
+
+
+
+```{r}
+#Skewness
+stat <- basicStats(LogR_amazon)
+skew <- stat[15,]
+skew
+```
+
+```{r}
+#Fit eGarch
+par(mfrow=c(3,4))
+garchspec_amazon <- ugarchspec(mean.model = list(armaOrder = c(2,1), include.mean = TRUE), 
+                        variance.model = list(model = "eGARCH", garchOrder = c(1, 1)),
+                        distribution.model = "sstd")
+
+garchfit_amazon<- ugarchfit(data = LogR_amazon, spec = garchspec_amazon)
+for (i in 1:12){
+  plot(garchfit_amazon, which=i)
+}
+```
+
+
+```{r}
+#VaR model 
+#cl = makePSOCKcluster(10)
+
+roll_amazon <- ugarchroll(garchspec_amazon,LogR_amazon, n.start = 500, refit.every = 25, refit.window = "moving", solver = "hybrid", calculate.VaR = TRUE,VaR.alpha = c(0.01, 0.05), cluster = NULL, keep.coef = TRUE)
+report(roll_amazon, type = "VaR", VaR.alpha = 0.01, conf.level = 0.99)
+
+#stopCluster(cl)
+for (i in 1:4){
+  plot(roll_amazon,which=i,VaR.alpha=0.01)
+}
+```
+
+```{r}
+#VaR line for Amazon
+var_amazon<-roll_amazon@forecast$VaR[,3]
+length(var_amazon)
+
+hv_amazon<- rollapply(LogR_amazon, 150, sd)
+l<-length(hv_amazon)
+hv_amazon<-hv_amazon[(l-length(var_amazon)+1):l]
+VaRMA <- hv_amazon * qnorm(0.05)
+```
+
+##################
+#      EBAY      #
+##################
+
+
+```{r}
+#Calculate the LogReturn of Amazon
+close_ebay <-EBAY[,"EBAY.Adjusted"]
+LogR_ebay <- dailyReturn(close_ebay, method = "log")
+LogR_ebay <- na.omit(LogR_ebay)
+
+#scatter plot
+plot(LogR_ebay, main = "Scatter plot of Ebay Log-Return", ylim = c(-0.4, 0.4))
+```
+
+```{r}
+#Box-Plot
+ebay_df <- xts_to_dataframe(LogR_ebay)
+
+dataframe_boxplot(ebay_df, "Ebay Log-Return box plots")
+```
+
+```{r}
+#Density-Plot based on years
+dataframe_densityplot <- function(dataset, title) {
+  p <- ggplot(data = dataset, aes(x = value)) + geom_density(fill = "lightblue") 
+  p <- p + facet_wrap(. ~ year)
+  p <- p + theme_bw() + theme(legend.position = "none") + ggtitle(title)
+  p
+}
+dataframe_densityplot(ebay_df, "Ebay daily log-returns density plots 1999-2018")
+```
+
+```{r}
+#acf test (randomness)
+acf(LogR_ebay)
+pacf(LogR_ebay)
+acf(LogR_ebay^2)
+```
+
+```{r}
+#Unit root test
+urdftest_lag2 = floor(12* (nrow(LogR_ebay)/100)^0.25)
+summary(ur.df(LogR_ebay, type = "none", lags = urdftest_lag2, selectlags="BIC"))
+```
+
+
+```{r}
+#fit arima
+auto_model_ebay <- auto.arima(LogR_ebay, max.d = 2, allowmean = FALSE)
+summary(auto_model_ebay)
+```
+
+```{r}
+#ARCH effect test
+residuals_ebay <- residuals(auto_model_ebay)
+ArchTest(residuals_ebay - mean(residuals_ebay))
+par(mfrow=c(1,2))
+acf(residuals_ebay)
+pacf(residuals_ebay)
+
+#Residual square
+residuals_sq_ebay <- residuals_ebay^2
+acf(residuals_sq_ebay)
+pacf(residuals_sq_ebay)
+```
+
+```{r}
+#Skewness
+stat2 <- basicStats(LogR_ebay)
+skew2 <- stat2[15,]
+skew2
+```
+
+```{r}
+#fit eGARCH
+par(mfrow=c(3,4))
+garchspec_ebay <- ugarchspec(mean.model = list(armaOrder = c(0,2), include.mean = TRUE), 
+                        variance.model = list(model = "eGARCH", garchOrder = c(1, 1)),
+                        distribution.model = "sstd")
+
+garchfit_ebay <- ugarchfit(data = LogR_ebay, spec = garchspec_ebay)
+for (i in 1:12){
+  plot(garchfit_ebay, which=i)
+}
+garchfit_ebay
+```
+
+```{r}
+#VaR model 
+library(parallel)
+#cl = makePSOCKcluster(10)
+roll_ebay <- ugarchroll(garchspec_ebay,LogR_ebay,n.start = 500, refit.every = 25,refit.window = "moving", solver = "hybrid", calculate.VaR = TRUE,VaR.alpha = c(0.01, 0.05), cluster = NULL, keep.coef = TRUE)
+report(roll_ebay, type = "VaR", VaR.alpha = 0.01, conf.level = 0.99)
+#stopCluster(cl)
+for (i in 1:4){
+  plot(roll_ebay,which=i,VaR.alpha=0.01)
+}
+```
+
+
+###################
+#     Walmart     #
+###################
+
+```{r}
+#Calculate the LogReturn of Amazon
+close_wmt <-WMT[,"WMT.Adjusted"]
+LogR_wmt <- dailyReturn(close_wmt, method = "log")
+LogR_wmt <- na.omit(LogR_wmt)
+
+#scatter plot
+plot(LogR_wmt, main = "Scatter plot of Walmart Log-Return", ylim = c(-0.4, 0.4))
+```
+
+```{r}
+#Box-plot
+wmt_df <- xts_to_dataframe(LogR_wmt)
+dataframe_boxplot(wmt_df, "Walmart Log-Return box plots")
+```
+
+```{r}
+#Density-Plot based on years
+dataframe_densityplot <- function(dataset, title) {
+  p <- ggplot(data = dataset, aes(x = value)) + geom_density(fill = "lightblue") 
+  p <- p + facet_wrap(. ~ year)
+  p <- p + theme_bw() + theme(legend.position = "none") + ggtitle(title)
+  p
+}
+dataframe_densityplot(wmt_df, "Walmart daily log-returns density plots 1998-2018")
+```
+
+```{r}
+#acf test (randomness)
+acf(LogR_wmt)
+pacf(LogR_wmt)
+acf(LogR_wmt^2)
+```
+
+```{r}
+#Unit root test
+urdftest_lag3 = floor(12* (nrow(LogR_wmt)/100)^0.25)
+summary(ur.df(LogR_wmt, type = "none", lags = urdftest_lag3, selectlags="BIC"))
+```
+
+```{r}
+#fit arima
+auto_model_wmt <- auto.arima(LogR_wmt, max.d = 2, allowmean = FALSE)
+summary(auto_model_wmt)
+```
+
+```{r}
+#ARCH effect test
+residuals_wmt <- residuals(auto_model_wmt)
+ArchTest(residuals_wmt - mean(residuals_wmt))
+par(mfrow=c(1,2))
+acf(residuals_wmt)
+pacf(residuals_wmt)
+
+#Residual square
+residuals_sq_wmt <- residuals_wmt^2
+acf(residuals_sq_wmt)
+pacf(residuals_sq_wmt)
+```
+
+```{r}
+#Skewness
+stat3 <- basicStats(LogR_wmt)
+skew3 <- stat3[15,]
+skew3
+```
+
+```{r}
+#fit eGARCH
+par(mfrow=c(3,4))
+garchspec_wmt <- ugarchspec(mean.model = list(armaOrder = c(1,0), include.mean = TRUE), 
+                        variance.model = list(model = "eGARCH", garchOrder = c(1, 1)),
+                        distribution.model = "sstd")
+
+garchfit_wmt <- ugarchfit(data = LogR_wmt, spec = garchspec_wmt)
+for (i in 1:12){
+  plot(garchfit_wmt, which=i)
+}
+```
+
+```{r}
+#VaR model 
+library(parallel)
+#cl = makePSOCKcluster(10)
+roll_wmt <- ugarchroll(garchspec_wmt,LogR_wmt,n.start = 500,refit.every = 100,refit.window = "moving", solver = "hybrid", calculate.VaR = TRUE,VaR.alpha = c(0.01, 0.05), cluster = NULL, keep.coef = TRUE)
+report(roll_wmt, type = "VaR", VaR.alpha = 0.01, conf.level = 0.99)
+#stopCluster(cl)
+for (i in 1:4){
+  plot(roll_wmt,which=i,VaR.alpha=0.01)
+}
+```
+
+
+```{r}
+plot(LogR_amazon, col = "black", pch = 10)
+points(LogR_ebay, col = "red", pch = 10)
+points(LogR_wmt, col = "blue", pch = 10)
+```
+
+
